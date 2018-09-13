@@ -130,32 +130,37 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 		ui_current = emperor_get(vassal_name);
 
 		if (ui_current) {
+
+			if (write(ui_current->pipe[0], "\1", 1) != 1) {
+				// the vassal could be already dead, better to curse it
+				uwsgi_error("emperor_respawn/write()");
+				emperor_curse(ui_current);
+				goto OK;
+			}
+
 			//TODO: Change attrs or  keep attrs
 			struct uwsgi_dyn_dict *attrs_old = ui_current->attrs;
 			while(attrs_old) {
 				if(uwsgi_strncmp(attrs_old->key,attrs_old->keylen,
 										"fork-server",11)){
-					
-					emperor_curse(ui_current);
-					
+
 					//does not work
 					//while(emperor_get(vassal_name)){// if timer -- log error go to end};
 					
-					//emperor_del(ui_current);
+					emperor_del(ui_current);
 					emperor_add_with_attrs(ues,vassal_name,uwsgi_now(),config,
 									smc.config_len,0,0,socket,attrs);
-					goto CK;
 				}
+				goto CK;
 				attrs_old = attrs_old->next;
 			}
-			free(ui_current->config);
-			ui_current->config = config;
-			ui_current->config_len = smc.config_len;
+				free(ui_current->config);
+				ui_current->config = config;
+				ui_current->config_len = smc.config_len;
 
-			emperor_respawn(ui_current,uwsgi_now());
-			//TODO ADD TIME
-			//while(!(ui_current->ready)){}
-
+				emperor_respawn(ui_current,uwsgi_now());
+				//TODO ADD TIME
+				//while(!(ui_current->ready)){}
 		} else {
 				uwsgi_log_verbose("Before add\n");
 			emperor_add_with_attrs(ues, vassal_name, uwsgi_now(), config,
@@ -169,12 +174,14 @@ CK:
 
 		if(emperor_get(vassal_name) != NULL){
 			uwsgi_log_verbose("DIdnt------------------------------------------\n");
-			int  i = write(client_fd, "+OK\n", 4);
-			uwsgi_log_verbose("Write:%d\n",i);
+			write(client_fd, "+OK\n", 4);
+			uwsgi_log_verbose("Write:\n");
 		} else {
 		
 			uwsgi_log_verbose("Failed------------------------------------------\n");
-			write(client_fd, "+Er\n", 4);
+			int i = write(client_fd, "+Er\n", 4);
+			uwsgi_log_verbose("Failed:%d\n",i);
+
 		}
 		uwsgi_log_verbose("Tst\n");
 	}
