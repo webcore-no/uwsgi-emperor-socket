@@ -132,6 +132,8 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 		if (ui_current) {
 
 			if (write(ui_current->pipe[0], "\1", 1) != 1) {
+				uwsgi_string_list *dead_hook = uwsgi_malloc();
+				dead_hook->
 				// the vassal could be already dead, better to curse it
 				uwsgi_error("emperor_respawn/write()");
 				emperor_curse(ui_current);
@@ -143,10 +145,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 			while(attrs_old) {
 				if(uwsgi_strncmp(attrs_old->key,attrs_old->keylen,
 										"fork-server",11)){
-
-					//does not work
-					//while(emperor_get(vassal_name)){// if timer -- log error go to end};
-					
+				
 					emperor_del(ui_current);
 					emperor_add_with_attrs(ues,vassal_name,uwsgi_now(),config,
 									smc.config_len,0,0,socket,attrs);
@@ -162,28 +161,22 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 				//TODO ADD TIME
 				//while(!(ui_current->ready)){}
 		} else {
-				uwsgi_log_verbose("Before add\n");
 			emperor_add_with_attrs(ues, vassal_name, uwsgi_now(), config,
 			                       smc.config_len, 0, 0, socket, attrs);
 		}
 CK:
+		if(emperor_get(vassal_name) != NULL){
+
+			write(client_fd, "+OK\n", 4);
+
+		} else {				
+			write(client_fd, "+Er\n", 4);
+
+		}	
 		pthread_mutex_unlock(&emperor_mutex);
 		//vassal and socket is copied
 		free(vassal_name);
 		free(socket);
-
-		if(emperor_get(vassal_name) != NULL){
-			uwsgi_log_verbose("DIdnt------------------------------------------\n");
-			write(client_fd, "+OK\n", 4);
-			uwsgi_log_verbose("Write:\n");
-		} else {
-		
-			uwsgi_log_verbose("Failed------------------------------------------\n");
-			int i = write(client_fd, "+Er\n", 4);
-			uwsgi_log_verbose("Failed:%d\n",i);
-
-		}
-		uwsgi_log_verbose("Tst\n");
 	}
 OK:
 	free(buf);
