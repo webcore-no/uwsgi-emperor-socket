@@ -15,6 +15,7 @@ exit -> curse -> die
 */
 
 #include "../../uwsgi.h"
+#include "poll.h"
 #include "pthread.h"
 
 pthread_mutex_t emperor_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -74,6 +75,20 @@ static void socket_monitor_attrs_parser(char *key, uint16_t keylen, char *val,
 	uwsgi_dyn_dict_new(data, kv + vallen + 1, keylen + 1, kv, vallen + 1);
 }
 
+int get_event_for_fd(int fd) {
+	struct pollfd pool;
+	pool.fd = fd;
+	pool.events = 1;
+	pool.revents = 0;
+	uwsgi_log("--BEFORE POLL--");
+	int ret = poll(&pool,1,1000);
+	uwsgi_log("--AFTER POLL--");
+	if(ret > 0 && pool.revents > 0) {
+			return 0;
+	}
+	return 1;	
+}
+
 void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 {	
 	struct uwsgi_dyn_dict *attrs = NULL;
@@ -104,7 +119,9 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 	if(!uwsgi_strncmp(smc.cmd, smc.cmd_len, "spawn", 5)) {
 		if(!smc.vassal) {
 			uwsgi_log_verbose("[socket-monitor] vassal name missing");
-			write(client_fd, "-vassal missing\n", 16);
+			if (write(client_fd, "-vassal missing\n", 16) != 16){
+				//TODO:Handle write error
+			}
 		}
 
 		if(smc.attrs) {
@@ -130,47 +147,41 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 		ui_current = emperor_get(vassal_name);
 
 		if (ui_current) {
+			uwsgi_log(":::::::::::::::::::::::::::::::::::UI_CURRENT\n");
 
-			if (write(ui_current->pipe[0], "\1", 1) != 1) {
-				uwsgi_string_list *dead_hook = uwsgi_malloc();
-				dead_hook->
-				// the vassal could be already dead, better to curse it
-				uwsgi_error("emperor_respawn/write()");
-				emperor_curse(ui_current);
-				goto OK;
+			free(ui_current->config);
+			ui_current->config = config;
+			ui_current->config_len = smc.config_len;
+			emperor_respawn(ui_current,uwsgi_now());
+
+			if(get_event_for_fd(ui_current->pipe[0]) == 0){
+				char byte;
+				ssize_t rlen = read(ui_current->pipe[0], &byte,1);
+				uwsgi_log_verbose("READ:%d:%d",byte,rlen);
 			}
-
-			//TODO: Change attrs or  keep attrs
-			struct uwsgi_dyn_dict *attrs_old = ui_current->attrs;
-			while(attrs_old) {
-				if(uwsgi_strncmp(attrs_old->key,attrs_old->keylen,
-										"fork-server",11)){
-				
-					emperor_del(ui_current);
-					emperor_add_with_attrs(ues,vassal_name,uwsgi_now(),config,
-									smc.config_len,0,0,socket,attrs);
-				}
-				goto CK;
-				attrs_old = attrs_old->next;
-			}
-				free(ui_current->config);
-				ui_current->config = config;
-				ui_current->config_len = smc.config_len;
-
-				emperor_respawn(ui_current,uwsgi_now());
-				//TODO ADD TIME
-				//while(!(ui_current->ready)){}
 		} else {
 			emperor_add_with_attrs(ues, vassal_name, uwsgi_now(), config,
 			                       smc.config_len, 0, 0, socket, attrs);
+		
+			if(get_event_for_fd(ui_current->pipe[0]) == 0){
+				uwsgi_log(":::::::::::::::::::::::::::GOT AN EVENT\n");
+				char byte;
+				ssize_t rlen = read(ui_current->pipe[0], &byte,1);
+				uwsgi_log_verbose("READ:%d:%d",byte,rlen);
+
+			} else {
+			}
 		}
-CK:
 		if(emperor_get(vassal_name) != NULL){
 
-			write(client_fd, "+OK\n", 4);
+			if(write(client_fd, "+OK\n", 4) != 4){
+				//TODO:Handle write error
+			}
 
 		} else {				
-			write(client_fd, "+Er\n", 4);
+			if(write(client_fd, "+Er\n", 4)) {
+				//TODO:Handle write error
+			}
 
 		}	
 		pthread_mutex_unlock(&emperor_mutex);
@@ -182,6 +193,8 @@ OK:
 	free(buf);
 	close(client_fd);
 }
+
+
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues)
 {
