@@ -1,3 +1,4 @@
+
 /*
 
 Emperor unix socket monitor
@@ -18,9 +19,33 @@ exit -> curse -> die
 #include "poll.h"
 #include "pthread.h"
 
-pthread_mutex_t emperor_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t emperor_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 extern struct uwsgi_server uwsgi;
+
+struct spawn {
+	int fd;
+	char *vassal_name;
+	struct spawn *next;
+};
+
+struct spawn *spawn_list;
+static void add_spawn(struct spawn **spp, int fd, char *vassal_name) {
+	struct spawn *sp = *spp;
+	if (sp == NULL) {
+		*spp = uwsgi_malloc(sizeof(struct spawn));
+		sp = *spp;
+	} else {
+		while (sp->next) {
+			sp = sp->next;
+		}
+		sp->next = uwsgi_malloc(sizeof(struct spawn));
+		sp = sp->next;
+	}
+	sp->fd = fd;
+	sp->vassal_name = vassal_name;
+	sp->next = NULL;
+}
 
 struct socket_monitor_command {
 	char *cmd;
@@ -74,46 +99,13 @@ static void socket_monitor_attrs_parser(char *key, uint16_t keylen, char *val,
 	uwsgi_dyn_dict_new(data, kv + vallen + 1, keylen + 1, kv, vallen + 1);
 }
 
-static int socket_monitor_vassal_ready_hook(char *arg) {
-	char *colon = strchr(arg, ':');
-	int fd = (int)*(colon + 1);
-
-	colon = strchr(colon + 1, ':');
-	char *vassal_name = colon + 1;
-
-	struct uwsgi_instance *ui_current;
-	ui_current = emperor_get(vassal_name);
-
-	if (ui_current != NULL && ui_current->accepting == 1) {
-		if (write(fd, "+OK\n", 4) != 4) {
-			// failed to write OK back
-		}
-
-		struct uwsgi_string_list *cur = uwsgi.hook_accepting;
-		struct uwsgi_string_list **last = &uwsgi.hook_accepting;
-		while (cur->next) {
-			if (strcmp(arg, cur->value)) {
-				last = &(cur->next);
-				free(cur);
-				break;
-			}
-			last = &cur;
-			cur = cur->next;
-		}
-		close(*arg);
-	} else {
-		uwsgi_log_verbose("");
-	}
-	return 0;
-}
-
 void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 	struct uwsgi_dyn_dict *attrs = NULL;
 	struct uwsgi_instance *ui_current;
-
-	int client_fd = accept(ues->fd, NULL, NULL);
+	
+	int client_fd = accept(ues->fd,0,0);
 	if (client_fd < 0) {
-		uwsgi_error("accept()");
+		uwsgi_error("connect()");
 		return;
 	}
 
@@ -168,6 +160,8 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 		pthread_mutex_lock(&emperor_mutex);
 		ui_current = emperor_get(vassal_name);
 
+		// vassal and socket is copied
+		add_spawn(&spawn_list, client_fd, vassal_name);
 		if (ui_current) {
 			free(ui_current->config);
 			ui_current->config = config;
@@ -180,49 +174,44 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 			ui_current = emperor_get(vassal_name);
 		}
 		pthread_mutex_unlock(&emperor_mutex);
-
-		// vassal and socket is copied
-		char *hook =
-		    uwsgi_concat4n("socket_monitor_vassal_ready_hook:", 33,
-				   (char *)(&client_fd), 1, ":", 1, smc.vassal,
-				   smc.vassal_len);
-		struct uwsgi_string_list *my_hook =
-		    uwsgi_malloc(sizeof(struct uwsgi_string_list));
-
-		memset(my_hook, 0, sizeof(struct uwsgi_string_list));
-		my_hook->value = hook;
-
-		struct uwsgi_string_list *cur = uwsgi.hook_accepting;
-		while (cur->next) {
-			cur = cur->next;
-		};
-		cur->next = my_hook;
-		uwsgi_log_verbose("\033[0;32m%s:%d\n\033[0m", hook, client_fd);
-		free(vassal_name);
+		// free(vassal_name);
 		free(socket);
 	}
 OK:
 	free(buf);
-	close(client_fd);
+	//	close(client_fd);
 }
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
-	ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
+	/*ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
 			       uwsgi.chmod_socket, uwsgi.abstract_socket);
-
+*/
+	char *addr = uwsgi_str("127.0.0.1:7769");
+	ues->fd = bind_to_tcp(addr,uwsgi.listen_queue,0);
+	uwsgi_log("Socket bound at:%d\n",ues->fd);
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
 	event_queue_add_fd_read(uwsgi.emperor_queue, ues->fd);
 }
 
 void uwsgi_imperial_monitor_socket(
-    __attribute__((unused)) struct uwsgi_emperor_scanner *ues) {}
+    __attribute__((unused)) struct uwsgi_emperor_scanner *ues) {
+	struct spawn *sp;
+	struct uwsgi_instance *ui_current;
+	uwsgi_foreach(sp, spawn_list) {
+		ui_current = emperor_get(sp->vassal_name);
 
+		if (ui_current && ui_current->accepting == 1) {
+			if (ui_current != NULL) {
+				if (write(sp->fd, "+OK\n", 4) != 4) {
+					// failed to write OK back
+				}
+				close(sp->fd);
+			}
+		}
+		ui_current = NULL;
+	}
+}
 void emperor_socket_init(void) {
-	// Registering the hook that will respond to the user when a vassel has
-	// spawned
-	uwsgi_register_hook("socket_monitor_vassal_ready_hook",
-			    socket_monitor_vassal_ready_hook);
-
 	// Registering the a monitor that handels requests
 	uwsgi_register_imperial_monitor("socket",
 					uwsgi_imperial_monitor_socket_init,
