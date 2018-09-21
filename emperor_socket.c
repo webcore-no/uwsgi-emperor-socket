@@ -1,4 +1,3 @@
-
 /*
 
 Emperor unix socket monitor
@@ -19,32 +18,45 @@ exit -> curse -> die
 #include "poll.h"
 #include "pthread.h"
 
-    pthread_mutex_t emperor_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+
+#define TIMEOUT 5 // timeout 5 sec
 extern struct uwsgi_server uwsgi;
 
 struct spawn {
 	int fd;
 	char *vassal_name;
+	time_t last_spawn;
 	struct spawn *next;
 };
 
 struct spawn *spawn_list;
-static void add_spawn(struct spawn **spp, int fd, char *vassal_name) {
+int add_spawn(struct spawn **spp, int fd, char *vassal_name) {
 	struct spawn *sp = *spp;
-	if (sp == NULL) {
-		*spp = uwsgi_malloc(sizeof(struct spawn));
+	if (!sp) {
+		*spp = uwsgi_calloc(sizeof(struct spawn));
 		sp = *spp;
 	} else {
-		while (sp->next) {
+		while (sp) {
+			if(strcmp(sp->vassal_name,vassal_name) == 0){	
+					char *output = uwsgi_concat3("+RE",vassal_name,"\n");
+					if(write(fd,output,strlen(output))){}
+					close(fd);	
+					return -1;
+			}
+			if(!sp->next){
+				sp->next = uwsgi_calloc(sizeof(struct spawn));
+				sp = sp->next;
+				break;
+			}
 			sp = sp->next;
 		}
-		sp->next = uwsgi_malloc(sizeof(struct spawn));
-		sp = sp->next;
 	}
 	sp->fd = fd;
-	sp->vassal_name = vassal_name;
+	sp->vassal_name = uwsgi_str(vassal_name);
+	sp->last_spawn = uwsgi_now();
 	sp->next = NULL;
+	return 0;
 }
 
 struct socket_monitor_command {
@@ -100,12 +112,14 @@ static void socket_monitor_attrs_parser(char *key, uint16_t keylen, char *val,
 }
 
 void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
+		
+	uwsgi_log("\e[7mTCP_TRIGGER\n\e[27m");
 	struct uwsgi_dyn_dict *attrs = NULL;
 	struct uwsgi_instance *ui_current;
-	
-	int client_fd = accept(ues->fd,0,0);
+
+	int client_fd = accept(ues->fd, NULL, NULL);
 	if (client_fd < 0) {
-		uwsgi_error("connect()");
+		uwsgi_error("accept()");
 		return;
 	}
 
@@ -157,7 +171,6 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 		char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);
 
 		// race
-		pthread_mutex_lock(&emperor_mutex);
 		ui_current = emperor_get(vassal_name);
 
 		// vassal and socket is copied
@@ -171,9 +184,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 			emperor_add_with_attrs(ues, vassal_name, uwsgi_now(),
 					       config, smc.config_len, 0, 0,
 					       socket, attrs);
-			ui_current = emperor_get(vassal_name);
 		}
-		pthread_mutex_unlock(&emperor_mutex);
 		// free(vassal_name);
 		free(socket);
 	}
@@ -186,9 +197,16 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 	/*ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
 			       uwsgi.chmod_socket, uwsgi.abstract_socket);
 */
-	char *addr = uwsgi_str("127.0.0.1:7769");
-	ues->fd = bind_to_tcp(addr,uwsgi.listen_queue,0);
-	uwsgi_log("Socket bound at:%d\n",ues->fd);
+	char *addr = uwsgi_str("127.0.0.1");
+	char *port = uwsgi_str(":7769");
+
+	ues->fd = bind_to_tcp(addr,uwsgi.listen_queue,port);
+	if(listen(ues->fd,1) == -1){
+		uwsgi_error("Failed to listen to fd.");
+	}
+	uwsgi_log("\e[7mTCP SOCKET AT:%d\e[27m\n",ues->fd);
+	free(addr);
+	free(port);
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
 	event_queue_add_fd_read(uwsgi.emperor_queue, ues->fd);
 }
@@ -199,14 +217,22 @@ void uwsgi_imperial_monitor_socket(
 	struct uwsgi_instance *ui_current;
 	uwsgi_foreach(sp, spawn_list) {
 		ui_current = emperor_get(sp->vassal_name);
-
 		if (ui_current && ui_current->accepting == 1) {
-			if (ui_current != NULL) {
-				if (write(sp->fd, "+OK\n", 4) != 4) {
-					// failed to write OK back
-				}
-				close(sp->fd);
+			char * output = uwsgi_concat3("+OK:",sp->vassal_name,"\n");
+			if (write(sp->fd,output ,strlen(output)) < 0) {
+				// failed to write OK back
 			}
+			free(output);
+			close(sp->fd);
+			sp->fd = -1;
+		} else if(uwsgi_now()-sp->last_spawn > TIMEOUT) {
+			char * output = uwsgi_concat3("+TO:",sp->vassal_name,"\n");
+			if (write(sp->fd,output, strlen(output)) < 0) {
+				// failed to write OK back
+			}
+			free(output);
+			close(sp->fd);
+			sp->fd = -1;
 		}
 		ui_current = NULL;
 	}
