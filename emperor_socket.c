@@ -17,34 +17,51 @@ exit -> curse -> die
 #include "../../uwsgi.h"
 #include "poll.h"
 #include "pthread.h"
+#include <sys/socket.h>
+#include <fcntl.h>
 
 
-
-#define TIMEOUT 5 // timeout 5 sec
+#define TIMEOUT 30  // timeout 30 sec
 extern struct uwsgi_server uwsgi;
 
 struct spawn {
 	int fd;
 	char *vassal_name;
 	time_t last_spawn;
+	int queue_fd;
+	char *queue_config;
+	uint16_t queue_config_len;
 	struct spawn *next;
+	pthread_mutex_t spawn_lock;
 };
 
 struct spawn *spawn_list;
-int add_spawn(struct spawn **spp, int fd, char *vassal_name) {
+int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config,
+	      uint16_t config_len) {
 	struct spawn *sp = *spp;
 	if (!sp) {
 		*spp = uwsgi_calloc(sizeof(struct spawn));
 		sp = *spp;
 	} else {
 		while (sp) {
-			if(strcmp(sp->vassal_name,vassal_name) == 0){	
-					char *output = uwsgi_concat3("+RE",vassal_name,"\n");
-					if(write(fd,output,strlen(output))){}
-					close(fd);	
-					return -1;
+			if (strcmp(sp->vassal_name, vassal_name) == 0) {
+				if(sp->fd < 0){
+						sp->fd = fd;
+						sp->last_spawn = uwsgi_now();
+						return 0;	
+				}
+				if (sp->queue_fd > 0) {
+					free(sp->queue_config);
+					if (write(sp->queue_fd, "+OV\n", 4)) {
+					}
+					close(sp->queue_fd);
+				}
+				sp->queue_fd = fd;
+				sp->queue_config = uwsgi_str(config);
+				sp->queue_config_len = config_len;
+				return -1;
 			}
-			if(!sp->next){
+			if (!sp->next) {
 				sp->next = uwsgi_calloc(sizeof(struct spawn));
 				sp = sp->next;
 				break;
@@ -111,86 +128,106 @@ static void socket_monitor_attrs_parser(char *key, uint16_t keylen, char *val,
 	uwsgi_dyn_dict_new(data, kv + vallen + 1, keylen + 1, kv, vallen + 1);
 }
 
-void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
-		
-	uwsgi_log("\e[7mTCP_TRIGGER\n\e[27m");
-	struct uwsgi_dyn_dict *attrs = NULL;
-	struct uwsgi_instance *ui_current;
 
-	int client_fd = accept(ues->fd, NULL, NULL);
+int i;
+void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
+	int client_fd;
+	client_fd = accept(ues->fd, NULL, NULL);
 	if (client_fd < 0) {
-		uwsgi_error("accept()");
+		uwsgi_error("ERR");
 		return;
 	}
+	while (client_fd > 0) {
 
-	size_t buf_len = uwsgi.page_size;
-	char *buf = uwsgi_malloc(buf_len);
 
-	if (uwsgi_read_with_realloc(client_fd, &buf, &buf_len,
-				    uwsgi.socket_timeout, NULL, NULL)) {
-		uwsgi_log_verbose(
-		    "[socket-monitor] unable to read socket message %d\n");
-		goto OK;
-	}
+		int now = uwsgi_micros();
+		uwsgi_log("ACCEPTED:%d\n",now);
+		i = i + 1;
+		struct uwsgi_dyn_dict *attrs = NULL;
+		struct uwsgi_instance *ui_current;
 
-	struct socket_monitor_command smc;
-	memset(&smc, 0, sizeof(struct socket_monitor_command));
+		size_t buf_len = uwsgi.page_size;
+		char *buf = uwsgi_malloc(buf_len);
 
-	if (uwsgi_hooked_parse(buf, buf_len, socket_monitor_command_parser,
-			       &smc)) {
-		uwsgi_log_verbose("[socket-monitor] uwsgi_hooked_parse\n");
-	}
-
-	if (!uwsgi_strncmp(smc.cmd, smc.cmd_len, "spawn", 5)) {
-		if (!smc.vassal) {
+		if (uwsgi_read_with_realloc(client_fd, &buf, &buf_len,
+					    uwsgi.socket_timeout, NULL, NULL)) {
 			uwsgi_log_verbose(
-			    "[socket-monitor] vassal name missing");
-			if (write(client_fd, "-vassal missing\n", 16) != 16) {
-				// TODO:Handle write error
-			}
+			    "[socket-monitor] unable to read socket message "
+			    "%d\n");
+			goto OK;
 		}
 
-		if (smc.attrs) {
-			if (uwsgi_hooked_parse(smc.attrs, smc.attrs_len,
-					       socket_monitor_attrs_parser,
-					       &attrs)) {
+		struct socket_monitor_command smc;
+		memset(&smc, 0, sizeof(struct socket_monitor_command));
+
+		if (uwsgi_hooked_parse(buf, buf_len,
+				       socket_monitor_command_parser, &smc)) {
+			uwsgi_log_verbose(
+			    "[socket-monitor] uwsgi_hooked_parse\n");
+		}
+
+		if (!uwsgi_strncmp(smc.cmd, smc.cmd_len, "spawn", 5)) {
+			if (!smc.vassal) {
 				uwsgi_log_verbose(
-				    "[socket-monitor] invalid attributes\n");
+				    "[socket-monitor] vassal name missing");
+				if (write(client_fd, "-vassal missing\n", 16) !=
+				    16) {
+					// TODO:Handle write error
+				}
 			}
-		}
-		char *config = NULL;
-		if (smc.config) {
-			config = uwsgi_strncopy(smc.config, smc.config_len);
-		}
 
-		char *socket = NULL;
-		if (smc.socket) {
-			socket = uwsgi_strncopy(smc.socket, smc.socket_len);
+			if (smc.attrs) {
+				if (uwsgi_hooked_parse(
+					smc.attrs, smc.attrs_len,
+					socket_monitor_attrs_parser, &attrs)) {
+					uwsgi_log_verbose(
+					    "[socket-monitor] invalid "
+					    "attributes\n");
+				}
+			}
+			char *config = NULL;
+			if (smc.config) {
+				config =
+				    uwsgi_strncopy(smc.config, smc.config_len);
+			}
+
+			char *socket = NULL;
+			if (smc.socket) {
+				socket =
+				    uwsgi_strncopy(smc.socket, smc.socket_len);
+			}
+
+			char *vassal_name =
+			    uwsgi_strncopy(smc.vassal, smc.vassal_len);
+
+			// race
+			ui_current = emperor_get(vassal_name);
+
+			// vassal and socket is copied
+			if (add_spawn(&spawn_list, client_fd, vassal_name,
+				      config, smc.config_len) == 0) {
+				if (ui_current) {
+					free(ui_current->config);
+					ui_current->config = config;
+					ui_current->config_len = smc.config_len;
+					emperor_respawn(ui_current,
+							uwsgi_now());
+				} else {
+					int now = uwsgi_micros();
+					uwsgi_log("LEAVING PLUGIN:%d\n",now);
+					emperor_add_with_attrs(
+					    ues, vassal_name, uwsgi_now(),
+					    config, smc.config_len, 0, 0,
+					    socket, attrs);
+				}
+			}
+			free(vassal_name);
+			free(socket);
 		}
-
-		char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);
-
-		// race
-		ui_current = emperor_get(vassal_name);
-
-		// vassal and socket is copied
-		add_spawn(&spawn_list, client_fd, vassal_name);
-		if (ui_current) {
-			free(ui_current->config);
-			ui_current->config = config;
-			ui_current->config_len = smc.config_len;
-			emperor_respawn(ui_current, uwsgi_now());
-		} else {
-			emperor_add_with_attrs(ues, vassal_name, uwsgi_now(),
-					       config, smc.config_len, 0, 0,
-					       socket, attrs);
-		}
-		// free(vassal_name);
-		free(socket);
+	OK:
+		free(buf);
+		client_fd = accept(ues->fd, NULL,NULL);
 	}
-OK:
-	free(buf);
-	//	close(client_fd);
 }
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
@@ -200,11 +237,14 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 	char *addr = uwsgi_str("127.0.0.1");
 	char *port = uwsgi_str(":7769");
 
-	ues->fd = bind_to_tcp(addr,uwsgi.listen_queue,port);
-	if(listen(ues->fd,1) == -1){
+	ues->fd = bind_to_tcp(addr, uwsgi.listen_queue, port);
+	if (listen(ues->fd, 32) == -1) {
 		uwsgi_error("Failed to listen to fd.");
 	}
-	uwsgi_log("\e[7mTCP SOCKET AT:%d\e[27m\n",ues->fd);
+	if(fcntl(ues->fd,F_SETFL,O_NONBLOCK)  == -1) {
+			uwsgi_error("[EMPEROR SOCKET]:Failed to set fd to O_NONBLOCK");
+	}
+	uwsgi_log("\e[7mTCP SOCKET AT:%d\e[27m\n", ues->fd);
 	free(addr);
 	free(port);
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
@@ -218,22 +258,28 @@ void uwsgi_imperial_monitor_socket(
 	uwsgi_foreach(sp, spawn_list) {
 		ui_current = emperor_get(sp->vassal_name);
 		if (ui_current && ui_current->accepting == 1) {
-			char * output = uwsgi_concat3("+OK:",sp->vassal_name,"\n");
-			if (write(sp->fd,output ,strlen(output)) < 0) {
+			if (write(sp->fd, "+OK\n", 4) < 0) {
 				// failed to write OK back
 			}
-			free(output);
 			close(sp->fd);
 			sp->fd = -1;
-		} else if(uwsgi_now()-sp->last_spawn > TIMEOUT) {
-			char * output = uwsgi_concat3("+TO:",sp->vassal_name,"\n");
-			if (write(sp->fd,output, strlen(output)) < 0) {
+			if (sp->queue_fd > 0) {
+				free(ui_current->config);
+				ui_current->config = sp->queue_config;
+				ui_current->config_len = sp->queue_config_len;
+				emperor_respawn(ui_current, uwsgi_now());
+				sp->fd = sp->queue_fd;
+				sp->queue_fd = -1;
+				sp->queue_config_len = 0;
+				sp->last_spawn = uwsgi_now();
+			} 
+		} /*else if (uwsgi_now() - sp->last_spawn > TIMEOUT) {
+			if (write(sp->fd, "+TO\n", 4) < 0) {
 				// failed to write OK back
 			}
-			free(output);
 			close(sp->fd);
 			sp->fd = -1;
-		}
+		}*/
 		ui_current = NULL;
 	}
 }
