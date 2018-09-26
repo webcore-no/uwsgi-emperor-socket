@@ -201,8 +201,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 					ui_current->config_len = smc.config_len;
 					emperor_respawn(ui_current, uwsgi_now());
 				}
-				else {
-					int now = uwsgi_micros();
+				else {	
 					emperor_add_with_attrs(ues, vassal_name, uwsgi_now(), config, smc.config_len, 0, 0, socket, attrs);
 				}
 			}
