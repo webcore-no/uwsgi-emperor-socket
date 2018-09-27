@@ -1,19 +1,3 @@
-/*
-
-Emperor unix socket monitor
-
-syntax: unix://path/to/socket
-
-TODO:
-race condition ved flere kommandoer mot samme vassal
-
-
-handling av restart ved fork-server (jeg viser deg fork-server oppsett)
-exit -> curse -> die
-
-
-*/
-
 #include "uwsgi.h"
 #include "poll.h"
 #include "pthread.h"
@@ -38,6 +22,7 @@ struct spawn {
 int emperor_freq = 0;
 int queue = 0;
 struct spawn *spawn_list;
+
 int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint16_t config_len) {
 	struct spawn *sp = *spp;
 	if (!sp) {
@@ -136,8 +121,6 @@ static void socket_monitor_attrs_parser(char *key, uint16_t keylen, char *val, u
 	uwsgi_dyn_dict_new(data, kv + vallen + 1, keylen + 1, kv, vallen + 1);
 }
 
-
-int i;
 void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 	int client_fd;
 	client_fd = accept(ues->fd, NULL, NULL);
@@ -146,7 +129,6 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 		return;
 	}
 	while (client_fd > 0) {
-		i = i + 1;
 		struct uwsgi_dyn_dict *attrs = NULL;
 		struct uwsgi_instance *ui_current;
 
@@ -190,9 +172,9 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 
 			char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);
 
-			// race
+
 			ui_current = emperor_get(vassal_name);
-			//uwsgi.emperor_freq = emperor_freq;
+
 			// vassal and socket is copied
 			if (add_spawn(&spawn_list, client_fd, vassal_name, config, smc.config_len) == 0) {
 				if (ui_current) {
@@ -261,13 +243,17 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				sp->queue_config_len = 0;
 				sp->last_spawn = uwsgi_now();
 			}
-		}		/*else if (uwsgi_now() - sp->last_spawn > TIMEOUT) {
-				   if (write(sp->fd, "+TO\n", 4) < 0) {
-				   // failed to write OK back
-				   }
-				   close(sp->fd);
-				   sp->fd = -1;
-				   } */
+		} else if (uwsgi_now() - sp->last_spawn > TIMEOUT && sp->last_spawn != 0) { 
+			queue = queue - 1;
+			sp->last_spawn = 0;
+			/*
+			if (write(sp->fd, "+TO\n", 4) < 0) {
+				uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
+			}
+			close(sp->fd);
+			sp->fd = -1;*/
+
+		} 
 		ui_current = NULL;
 	}
 	if(queue < 1) {
