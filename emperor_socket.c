@@ -5,7 +5,24 @@
 #include <fcntl.h>
 
 
-#define TIMEOUT 30		// timeout 30 sec
+//configurable variables
+int timeout = 30;
+int queue_length = 100;
+int socket_type = 0;
+/*enum Socket_type {
+		tcp = 0,
+		unix = 1
+};*/
+char* socket_addr;
+
+void update_setting(char *opt,char *value, void *useless) {
+}
+/*
+struct uwsgi_option socket_monitor_options[] = {
+	{"socket_monitor_type",required_argument,0,"set the type of socket (0=tcp,1=unix)",update_setting,
+
+};*/
+
 extern struct uwsgi_server uwsgi;
 
 struct spawn {
@@ -198,9 +215,9 @@ OK:
 }
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
-	/*ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
+	ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
 	   uwsgi.chmod_socket, uwsgi.abstract_socket);
-	 */
+	/* 
 	char *addr = uwsgi_str("127.0.0.1");
 	char *port = uwsgi_str(":7769");
 
@@ -213,7 +230,7 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 	}
 	free(addr);
 	free(port);
-
+	*/
 	emperor_freq = uwsgi.emperor_freq;
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
 	event_queue_add_fd_read(uwsgi.emperor_queue, ues->fd);
@@ -243,7 +260,7 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				sp->queue_config_len = 0;
 				sp->last_spawn = uwsgi_now();
 			}
-		} else if (uwsgi_now() - sp->last_spawn > TIMEOUT && sp->last_spawn != 0) { 
+		} else if (uwsgi_now() - sp->last_spawn > timeout && sp->last_spawn != 0) { 
 			queue = queue - 1;
 			sp->last_spawn = 0;
 			/*
