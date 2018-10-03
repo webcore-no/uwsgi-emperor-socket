@@ -24,7 +24,6 @@ struct uwsgi_option socket_monitor_options[] = {
 };*/
 
 extern struct uwsgi_server uwsgi;
-
 struct spawn {
 	int fd;
 	char *vassal_name;
@@ -163,8 +162,8 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 		if (uwsgi_hooked_parse(buf, buf_len, socket_monitor_command_parser, &smc)) {
 			uwsgi_log_verbose("[socket-monitor] uwsgi_hooked_parse\n");
 		}
-
 		if (!uwsgi_strncmp(smc.cmd, smc.cmd_len, "spawn", 5)) {
+
 			if (!smc.vassal) {
 				uwsgi_log_verbose("[socket-monitor] vassal name missing");
 				if (write(client_fd, "-vassal missing\n", 16) != 16) {
@@ -187,8 +186,8 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 				socket = uwsgi_strncopy(smc.socket, smc.socket_len);
 			}
 
-			char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);
-
+			char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);	
+			uwsgi_log_verbose("[socket-monitor] spawn request for %s",vassal_name);
 
 			ui_current = emperor_get(vassal_name);
 
@@ -207,6 +206,11 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 			uwsgi.emperor_freq = 0;
 			free(vassal_name);
 			free(socket);
+		} else {
+				if (write(client_fd,"-IC\n",4) != 4){
+					uwsgi_error("uwsgi_imperial_monitor_socket_event()/write()");
+				}
+				close(client_fd);
 		}
 OK:
 		free(buf);
@@ -217,20 +221,20 @@ OK:
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 	ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
 	   uwsgi.chmod_socket, uwsgi.abstract_socket);
-	/* 
-	char *addr = uwsgi_str("127.0.0.1");
-	char *port = uwsgi_str(":7769");
+	 
+	//char *addr = uwsgi_str("127.0.0.1");
+	//char *port = uwsgi_str(":5599");
 
-	ues->fd = bind_to_tcp(addr, uwsgi.listen_queue, port);
+	//ues->fd = bind_to_tcp(addr, uwsgi.listen_queue, port);
 	if (listen(ues->fd, 100) == -1) {
 		uwsgi_error("uwsgi_imperial_monitor_socket_init()/listen()");
 	}
 	if (fcntl(ues->fd, F_SETFL, O_NONBLOCK) == -1) {
 		uwsgi_error("uwsgi_imperial_monitor_socket_init()/fcntl()");
 	}
-	free(addr);
-	free(port);
-	*/
+	//free(addr);
+	//free(port);
+	
 	emperor_freq = uwsgi.emperor_freq;
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
 	event_queue_add_fd_read(uwsgi.emperor_queue, ues->fd);
@@ -244,6 +248,7 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 		ui_current = emperor_get(sp->vassal_name);
 		if (ui_current && ui_current->accepting == 1 && sp->fd > 0) {
 			queue = queue - 1;
+			uwsgi_log_verbose("[emperor_socket] infroming %d ",sp->fd);
 			if (write(sp->fd, "+OK\n", 4) < 0) {
 				uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
 				// failed to write OK back
@@ -263,13 +268,6 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 		} else if (uwsgi_now() - sp->last_spawn > timeout && sp->last_spawn != 0) { 
 			queue = queue - 1;
 			sp->last_spawn = 0;
-			/*
-			if (write(sp->fd, "+TO\n", 4) < 0) {
-				uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
-			}
-			close(sp->fd);
-			sp->fd = -1;*/
-
 		} 
 		ui_current = NULL;
 	}
