@@ -23,12 +23,18 @@ struct uwsgi_option socket_monitor_options[] = {
 
 };*/
 
+
+
 extern struct uwsgi_server uwsgi;
+
+struct filedescriptor_node {
+		int fd;
+		struct filedescriptor_node *next;
+};
 struct spawn {
-	int fd;
+	struct filedescriptor_node *fd;
 	char *vassal_name;
 	time_t last_spawn;
-	int queue_fd;
 	char *queue_config;
 	uint16_t queue_config_len;
 	struct spawn *next;
@@ -39,6 +45,29 @@ int emperor_freq = 0;
 int queue = 0;
 struct spawn *spawn_list;
 
+void free_fd_list(struct filedescriptor_node *fp) {
+		if(fp->next) {
+			free_fd_list(fp->next);
+		}
+		free(fp);
+}
+
+void add_fd(struct filedescriptor_node **fpp, int fd) {
+	struct filedescriptor_node *fp = *fpp;
+	if(!fp) {
+		*fpp = uwsgi_calloc(sizeof(struct filedescriptor_node));
+		fp = *fpp;
+	}
+	else {
+			while(fp->next) {
+				fp = fp->next;
+			}
+			fp->next = uwsgi_calloc(sizeof(struct filedescriptor_node));
+			fp = fp->next;
+	}
+	fp->fd = fd;
+}
+
 int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint16_t config_len) {
 	struct spawn *sp = *spp;
 	if (!sp) {
@@ -48,25 +77,17 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint1
 	else {
 		while (sp) {
 			if (strcmp(sp->vassal_name, vassal_name) == 0) {
-				if (sp->fd < 0) {
+				if (sp->fd == 0) {
 					queue += 1;
-					sp->fd = fd;
+					add_fd(&sp->fd,fd);
 					sp->last_spawn = uwsgi_now();
 					return 0;
-				}
-				if (sp->queue_fd > -1) {
-					free(sp->queue_config);
-					if (write(sp->queue_fd, "+OV\n", 4)) {
-						uwsgi_error("add_spawn()/write()");
-					}
-					close(sp->queue_fd);
 				} else {
-						queue += 1;
+					add_fd(&sp->fd,fd);
+					sp->queue_config = uwsgi_str(config);
+					sp->queue_config_len = config_len;
+					return -1;
 				}
-				sp->queue_fd = fd;
-				sp->queue_config = uwsgi_str(config);
-				sp->queue_config_len = config_len;
-				return -1;
 			}
 			if (!sp->next) {
 				sp->next = uwsgi_calloc(sizeof(struct spawn));
@@ -77,7 +98,7 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint1
 		}
 	}
 	queue += 1;			
-	sp->fd = fd;
+	add_fd(&sp->fd,fd);
 	sp->vassal_name = uwsgi_str(vassal_name);
 	sp->last_spawn = uwsgi_now();
 	sp->next = NULL;
@@ -226,7 +247,7 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 	//char *port = uwsgi_str(":5599");
 
 	//ues->fd = bind_to_tcp(addr, uwsgi.listen_queue, port);
-	if (listen(ues->fd, 100) == -1) {
+	if (listen(ues->fd, 256) == -1) {
 		uwsgi_error("uwsgi_imperial_monitor_socket_init()/listen()");
 	}
 	if (fcntl(ues->fd, F_SETFL, O_NONBLOCK) == -1) {
@@ -243,27 +264,29 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				   struct uwsgi_emperor_scanner *ues) {
 	struct spawn *sp;
+	struct filedescriptor_node *fp;
 	struct uwsgi_instance *ui_current;
 	uwsgi_foreach(sp, spawn_list) {
 		ui_current = emperor_get(sp->vassal_name);
-		if (ui_current && ui_current->accepting == 1 && sp->fd > 0) {
+		if (ui_current && ui_current->accepting == 1 && sp->fd != 0) {
 			queue = queue - 1;
-			uwsgi_log_verbose("[emperor_socket] infroming %d ",sp->fd);
-			if (write(sp->fd, "+OK\n", 4) < 0) {
-				uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
-				// failed to write OK back
-			}
-			close(sp->fd);
-			sp->fd = -1;
-			if (sp->queue_fd > 0) {
+			if (sp->queue_config_len > 0) {
 				free(ui_current->config);
 				ui_current->config = sp->queue_config;
 				ui_current->config_len = sp->queue_config_len;
 				emperor_respawn(ui_current, uwsgi_now());
-				sp->fd = sp->queue_fd;
-				sp->queue_fd = -1;
 				sp->queue_config_len = 0;
 				sp->last_spawn = uwsgi_now();
+			} else {
+				uwsgi_foreach(fp,sp->fd) {
+					if (write(fp->fd, "+OK\n", 4) < 0) {
+						uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
+						// failed to write OK back
+					}
+					close(fp->fd);
+				}
+				free_fd_list(sp->fd);
+				sp->fd = 0;
 			}
 		} else if (uwsgi_now() - sp->last_spawn > timeout && sp->last_spawn != 0) { 
 			queue = queue - 1;
