@@ -243,7 +243,8 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 		socket_name = uwsgi_str("@emperor");
 	}
 	char *addr = socket_name;
-	if(uwsgi_strncmp("unix:",5,addr,5)){
+	if(strncmp("unix:",addr,5) == 0){
+		uwsgi_log("unix socket\n");
 		ues->fd = bind_to_unix(addr+5, uwsgi.listen_queue, uwsgi.chmod_socket, uwsgi.abstract_socket);
 	} else {
 		char *port = strchr(addr,':');
