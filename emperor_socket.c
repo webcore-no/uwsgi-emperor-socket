@@ -240,7 +240,7 @@ OK:
 }
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
-	ues->fd = bind_to_unix("/tmp/emperor.sock", uwsgi.listen_queue,
+	ues->fd = bind_to_unix("@emperor", uwsgi.listen_queue,
 	   uwsgi.chmod_socket, uwsgi.abstract_socket);
 	 
 	//char *addr = uwsgi_str("127.0.0.1");
