@@ -8,11 +8,17 @@
 //configurable variables
 int timeout = 30;
 int queue_length = 100;
-int socket_type = 0;
-/*enum Socket_type {
-		tcp = 0,
-		unix = 1
-};*/
+char *socket_name;
+
+struct uwsgi_option uwsgi_emperor_socket_options[] = {
+	{"empsoc-socket",required_argument,0,
+		"set the socket name for emperor_socket", uwsgi_opt_set_str,&socket_name,0},
+	{"empsoc-queue",required_argument,0,
+		"set the queue length for emperor_socket",uwsgi_opt_set_int,&queue_length,0},
+	{"empsoc-boost-timeout",required_argument,0,
+		"set the boost timeout for emperor_socket",uwsgi_opt_set_int,&timeout,0}
+};
+
 char *socket_addr;
 
 extern struct uwsgi_server uwsgi;
@@ -233,20 +239,30 @@ OK:
 }
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
-	ues->fd = bind_to_unix("@emperor", uwsgi.listen_queue, uwsgi.chmod_socket, uwsgi.abstract_socket);
-
-	//char *addr = uwsgi_str("127.0.0.1");
-	//char *port = uwsgi_str(":5599");
-
-	//ues->fd = bind_to_tcp(addr, uwsgi.listen_queue, port);
-	if (listen(ues->fd, 256) == -1) {
+	if (socket_name == NULL) {
+		socket_name = uwsgi_str("@emperor");
+	}
+	char *addr = socket_name;
+	if(uwsgi_strncmp("unix:",5,addr,5)){
+		ues->fd = bind_to_unix(addr+5, uwsgi.listen_queue, uwsgi.chmod_socket, uwsgi.abstract_socket);
+	} else {
+		char *port = strchr(addr,':');
+		if (port){
+			port[0] = 0;
+			ues->fd = bind_to_tcp(addr, uwsgi.listen_queue, port+1);
+			port[0] = ':';
+		} else {
+			uwsgi_error("uwsgi_imperial_monitor_socket_init()/strchr()");
+			return;
+		}
+	}
+	if (listen(ues->fd, queue_length) == -1) {
 		uwsgi_error("uwsgi_imperial_monitor_socket_init()/listen()");
 	}
 	if (fcntl(ues->fd, F_SETFL, O_NONBLOCK) == -1) {
 		uwsgi_error("uwsgi_imperial_monitor_socket_init()/fcntl()");
 	}
-	//free(addr);
-	//free(port);
+	uwsgi_log_verbose("[emepror_socket] ready at %s\n",addr);
 
 	emperor_freq = uwsgi.emperor_freq;
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
@@ -300,4 +316,5 @@ void emperor_socket_init(void) {
 struct uwsgi_plugin emperor_socket_plugin = {
 	.name = "emperor_socket",
 	.on_load = emperor_socket_init,
+	.options = uwsgi_emperor_socket_options,
 };
