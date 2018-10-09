@@ -13,24 +13,15 @@ int socket_type = 0;
 		tcp = 0,
 		unix = 1
 };*/
-char* socket_addr;
-
-void update_setting(char *opt,char *value, void *useless) {
-}
-/*
-struct uwsgi_option socket_monitor_options[] = {
-	{"socket_monitor_type",required_argument,0,"set the type of socket (0=tcp,1=unix)",update_setting,
-
-};*/
-
-
+char *socket_addr;
 
 extern struct uwsgi_server uwsgi;
 
 struct filedescriptor_node {
-		int fd;
-		struct filedescriptor_node *next;
+	int fd;
+	struct filedescriptor_node *next;
 };
+
 struct spawn {
 	struct filedescriptor_node *fd;
 	char *vassal_name;
@@ -46,24 +37,24 @@ int queue = 0;
 struct spawn *spawn_list;
 
 void free_fd_list(struct filedescriptor_node *fp) {
-		if(fp->next) {
-			free_fd_list(fp->next);
-		}
-		free(fp);
+	if (fp->next) {
+		free_fd_list(fp->next);
+	}
+	free(fp);
 }
 
 void add_fd(struct filedescriptor_node **fpp, int fd) {
 	struct filedescriptor_node *fp = *fpp;
-	if(!fp) {
+	if (!fp) {
 		*fpp = uwsgi_calloc(sizeof(struct filedescriptor_node));
 		fp = *fpp;
 	}
 	else {
-			while(fp->next) {
-				fp = fp->next;
-			}
-			fp->next = uwsgi_calloc(sizeof(struct filedescriptor_node));
+		while (fp->next) {
 			fp = fp->next;
+		}
+		fp->next = uwsgi_calloc(sizeof(struct filedescriptor_node));
+		fp = fp->next;
 	}
 	fp->fd = fd;
 }
@@ -79,11 +70,12 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint1
 			if (strcmp(sp->vassal_name, vassal_name) == 0) {
 				if (sp->fd == 0) {
 					queue += 1;
-					add_fd(&sp->fd,fd);
+					add_fd(&sp->fd, fd);
 					sp->last_spawn = uwsgi_now();
 					return 0;
-				} else {
-					add_fd(&sp->fd,fd);
+				}
+				else {
+					add_fd(&sp->fd, fd);
 					sp->queue_config = uwsgi_str(config);
 					sp->queue_config_len = config_len;
 					return -1;
@@ -97,8 +89,8 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint1
 			sp = sp->next;
 		}
 	}
-	queue += 1;			
-	add_fd(&sp->fd,fd);
+	queue += 1;
+	add_fd(&sp->fd, fd);
 	sp->vassal_name = uwsgi_str(vassal_name);
 	sp->last_spawn = uwsgi_now();
 	sp->next = NULL;
@@ -173,7 +165,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 		char *buf = uwsgi_malloc(buf_len);
 
 		if (uwsgi_read_with_realloc(client_fd, &buf, &buf_len, uwsgi.socket_timeout, NULL, NULL)) {
-			uwsgi_error("uwsgi_imperial_monitor_socket_event()/uwsgi_read_realloc()");		
+			uwsgi_error("uwsgi_imperial_monitor_socket_event()/uwsgi_read_realloc()");
 			goto OK;
 		}
 
@@ -207,8 +199,8 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 				socket = uwsgi_strncopy(smc.socket, smc.socket_len);
 			}
 
-			char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);	
-			uwsgi_log_verbose("[socket-monitor] spawn request for %s",vassal_name);
+			char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);
+			uwsgi_log_verbose("[socket-monitor] spawn request for %s", vassal_name);
 
 			ui_current = emperor_get(vassal_name);
 
@@ -220,18 +212,19 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 					ui_current->config_len = smc.config_len;
 					emperor_respawn(ui_current, uwsgi_now());
 				}
-				else {				
+				else {
 					emperor_add_with_attrs(ues, vassal_name, uwsgi_now(), config, smc.config_len, 0, 0, socket, attrs);
 				}
 			}
 			uwsgi.emperor_freq = 0;
 			free(vassal_name);
 			free(socket);
-		} else {
-				if (write(client_fd,"-IC\n",4) != 4){
-					uwsgi_error("uwsgi_imperial_monitor_socket_event()/write()");
-				}
-				close(client_fd);
+		}
+		else {
+			if (write(client_fd, "-IC\n", 4) != 4) {
+				uwsgi_error("uwsgi_imperial_monitor_socket_event()/write()");
+			}
+			close(client_fd);
 		}
 OK:
 		free(buf);
@@ -240,9 +233,8 @@ OK:
 }
 
 void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
-	ues->fd = bind_to_unix("@emperor", uwsgi.listen_queue,
-	   uwsgi.chmod_socket, uwsgi.abstract_socket);
-	 
+	ues->fd = bind_to_unix("@emperor", uwsgi.listen_queue, uwsgi.chmod_socket, uwsgi.abstract_socket);
+
 	//char *addr = uwsgi_str("127.0.0.1");
 	//char *port = uwsgi_str(":5599");
 
@@ -255,7 +247,7 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues) {
 	}
 	//free(addr);
 	//free(port);
-	
+
 	emperor_freq = uwsgi.emperor_freq;
 	ues->event_func = uwsgi_imperial_monitor_socket_event;
 	event_queue_add_fd_read(uwsgi.emperor_queue, ues->fd);
@@ -277,8 +269,9 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				emperor_respawn(ui_current, uwsgi_now());
 				sp->queue_config_len = 0;
 				sp->last_spawn = uwsgi_now();
-			} else {
-				uwsgi_foreach(fp,sp->fd) {
+			}
+			else {
+				uwsgi_foreach(fp, sp->fd) {
 					if (write(fp->fd, "+OK\n", 4) < 0) {
 						uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
 						// failed to write OK back
@@ -288,14 +281,15 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				free_fd_list(sp->fd);
 				sp->fd = 0;
 			}
-		} else if (uwsgi_now() - sp->last_spawn > timeout && sp->last_spawn != 0) { 
+		}
+		else if (uwsgi_now() - sp->last_spawn > timeout && sp->last_spawn != 0) {
 			queue = queue - 1;
 			sp->last_spawn = 0;
-		} 
+		}
 		ui_current = NULL;
 	}
-	if(queue < 1) {
-			uwsgi.emperor_freq = emperor_freq;
+	if (queue < 1) {
+		uwsgi.emperor_freq = emperor_freq;
 	}
 }
 void emperor_socket_init(void) {
