@@ -16,7 +16,8 @@ struct uwsgi_option uwsgi_emperor_socket_options[] = {
 	{"empsoc-queue",required_argument,0,
 		"set the queue length for emperor_socket",uwsgi_opt_set_int,&queue_length,0},
 	{"empsoc-boost-timeout",required_argument,0,
-		"set the boost timeout for emperor_socket",uwsgi_opt_set_int,&timeout,0}
+		"set the boost timeout for emperor_socket",uwsgi_opt_set_int,&timeout,0},
+	UWSGI_END_OF_OPTIONS
 };
 
 char *socket_addr;
@@ -206,7 +207,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 			}
 
 			char *vassal_name = uwsgi_strncopy(smc.vassal, smc.vassal_len);
-			uwsgi_log_verbose("[socket-monitor] spawn request for %s", vassal_name);
+			uwsgi_log_verbose("[socket-monitor] spawn request for %s\n", vassal_name);
 
 			ui_current = emperor_get(vassal_name);
 
@@ -278,7 +279,6 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 	uwsgi_foreach(sp, spawn_list) {
 		ui_current = emperor_get(sp->vassal_name);
 		if (ui_current && ui_current->accepting == 1 && sp->fd != 0) {
-			queue = queue - 1;
 			if (sp->queue_config_len > 0) {
 				free(ui_current->config);
 				ui_current->config = sp->queue_config;
@@ -289,6 +289,7 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 			}
 			else {
 				uwsgi_foreach(fp, sp->fd) {
+					queue = queue - 1;
 					if (write(fp->fd, "+OK\n", 4) < 0) {
 						uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
 						// failed to write OK back
