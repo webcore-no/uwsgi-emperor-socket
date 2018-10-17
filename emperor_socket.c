@@ -31,6 +31,7 @@ struct filedescriptor_node {
 
 struct spawn {
 	struct filedescriptor_node *fd;
+	char *vassal_socket;
 	char *vassal_name;
 	time_t last_spawn;
 	char *queue_config;
@@ -49,6 +50,14 @@ void free_fd_list(struct filedescriptor_node *fp) {
 	}
 	free(fp);
 }
+int fd_list_len(struct filedescriptor_node *fp) {
+	int i = 1; 
+	if(fp->next) {
+		i = i+1;
+		fp = fp->next;
+	}
+	return i;
+}
 
 void add_fd(struct filedescriptor_node **fpp, int fd) {
 	struct filedescriptor_node *fp = *fpp;
@@ -66,8 +75,33 @@ void add_fd(struct filedescriptor_node **fpp, int fd) {
 	fp->fd = fd;
 }
 
+char *find_vassal_socket(char *config,size_t len) {
+	if(config == NULL)
+		return NULL;
+	char *start = memmem(config,len,"socket",6);
+	if(start != 0) {
+		start = start + 6;
+		while(start[0] == ' ' || start[0] == '=') {
+			start = start + 1;
+		}
+		char *end = start;
+		while(end[0] != ' ' && end[0] != '\n' && end[0] != 0) {
+			end = end + 1;
+		}
+		char e = end[0];
+		end[0] = 0;
+		start = uwsgi_str(start);
+		end[0] = e;
+		return start;
+
+	}
+	return NULL;
+}
+
 int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint16_t config_len) {
 	struct spawn *sp = *spp;
+	
+	char *vassal_socket = find_vassal_socket(config,config_len);
 	if (!sp) {
 		*spp = uwsgi_calloc(sizeof(struct spawn));
 		sp = *spp;
@@ -79,12 +113,14 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint1
 					queue += 1;
 					add_fd(&sp->fd, fd);
 					sp->last_spawn = uwsgi_now();
+					sp->vassal_socket = vassal_socket;
 					return 0;
 				}
 				else {
 					add_fd(&sp->fd, fd);
 					sp->queue_config = uwsgi_str(config);
 					sp->queue_config_len = config_len;
+					sp->vassal_socket = vassal_socket;
 					return -1;
 				}
 			}
@@ -98,6 +134,7 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint1
 	}
 	queue += 1;
 	add_fd(&sp->fd, fd);
+	sp->vassal_socket = vassal_socket;
 	sp->vassal_name = uwsgi_str(vassal_name);
 	sp->last_spawn = uwsgi_now();
 	sp->next = NULL;
@@ -212,6 +249,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 			ui_current = emperor_get(vassal_name);
 
 			// vassal and socket is copied
+						
 			if (add_spawn(&spawn_list, client_fd, vassal_name, config, smc.config_len) == 0) {
 				if (ui_current) {
 					free(ui_current->config);
@@ -286,22 +324,28 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				emperor_respawn(ui_current, uwsgi_now());
 				sp->queue_config_len = 0;
 				sp->last_spawn = uwsgi_now();
+				
 			}
 			else {
-				uwsgi_foreach(fp, sp->fd) {
-					queue = queue - 1;
-					if (write(fp->fd, "+OK\n", 4) < 0) {
-						uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
-						// failed to write OK back
+				int vfd = uwsgi_connect(sp->vassal_socket,1,0);
+				if (vfd > -1){
+					close(vfd);
+					uwsgi_log("\n----------\n\n");
+					uwsgi_foreach(fp, sp->fd) {
+						queue = queue - 1;
+						if (write(fp->fd, "+OK\n", 4) < 0) {
+							uwsgi_error("uwsgi_imperial_monitor_socket()/write()");
+						}
+						close(fp->fd);
 					}
-					close(fp->fd);
+					free_fd_list(sp->fd);
+					sp->fd = 0;
+					sp->last_spawn = 0;
 				}
-				free_fd_list(sp->fd);
-				sp->fd = 0;
 			}
 		}
 		else if (uwsgi_now() - sp->last_spawn > timeout && sp->last_spawn != 0) {
-			queue = queue - 1;
+			queue = queue - fd_list_len(sp->fd);
 			sp->last_spawn = 0;
 		}
 		ui_current = NULL;
