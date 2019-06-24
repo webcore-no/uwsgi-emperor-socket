@@ -100,7 +100,6 @@ char *find_vassal_socket(char *config,size_t len) {
 
 int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config, uint16_t config_len) {
 	struct spawn *sp = *spp;
-	
 	char *vassal_socket = find_vassal_socket(config,config_len);
 	if (!sp) {
 		*spp = uwsgi_calloc(sizeof(struct spawn));
@@ -249,7 +248,6 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues) {
 			ui_current = emperor_get(vassal_name);
 
 			// vassal and socket is copied
-						
 			if (add_spawn(&spawn_list, client_fd, vassal_name, config, smc.config_len) == 0) {
 				if (ui_current) {
 					free(ui_current->config);
@@ -324,7 +322,6 @@ void uwsgi_imperial_monitor_socket( __attribute__ ((unused))
 				emperor_respawn(ui_current, uwsgi_now());
 				sp->queue_config_len = 0;
 				sp->last_spawn = uwsgi_now();
-				
 			}
 			else {
 				int vfd = uwsgi_connect(sp->vassal_socket,1,0);
