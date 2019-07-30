@@ -51,7 +51,7 @@ void free_fd_list(struct filedescriptor_node *fp) {
 	free(fp);
 }
 int fd_list_len(struct filedescriptor_node *fp) {
-	int i = 1; 
+	int i = 1;
 	if(fp->next) {
 		i = i+1;
 		fp = fp->next;
