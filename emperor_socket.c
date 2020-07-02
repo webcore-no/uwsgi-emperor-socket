@@ -36,8 +36,6 @@ struct spawn {
 	char *vassal_socket;
 	char *vassal_name;
 	time_t last_spawn;
-	char *queue_config;
-	uint16_t queue_config_len;
 	struct spawn *next;
 	pthread_mutex_t spawn_lock;
 };
@@ -106,6 +104,7 @@ char *find_vassal_socket(char *config, size_t len)
 int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config,
 	      uint16_t config_len)
 {
+
 	struct spawn *sp = *spp;
 	char *vassal_socket = find_vassal_socket(config, config_len);
 	if (!sp) {
@@ -124,8 +123,6 @@ int add_spawn(struct spawn **spp, int fd, char *vassal_name, char *config,
 				}
 				else {
 					add_fd(&sp->fd, fd);
-					// sp->queue_config = uwsgi_str(config);
-					// sp->queue_config_len = config_len;
 					sp->vassal_socket = vassal_socket;
 					return -1;
 				}
@@ -270,7 +267,6 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 				socket = uwsgi_strncopy(smc.socket,
 							smc.socket_len);
 			}
-
 			char *vassal_name =
 				uwsgi_strncopy(smc.vassal, smc.vassal_len);
 			uwsgi_log_verbose(
@@ -282,7 +278,8 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 			// vassal and socket is copied
 			if (add_spawn(&spawn_list, client_fd, vassal_name,
 				      config, smc.config_len) == 0) {
-				if (ui_current) {
+
+				if (ui_current && ui_current->status <= 0) {
 					if (smc.config_len !=
 						    ui_current->config_len ||
 					    memcmp(ui_current->config, config,
@@ -291,9 +288,9 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 						ui_current->config = config;
 						ui_current->config_len =
 							smc.config_len;
-						emperor_respawn(ui_current,
-								uwsgi_now());
 					}
+					emperor_respawn(ui_current,
+							uwsgi_now());
 				}
 				else {
 					emperor_add_with_attrs(
@@ -325,6 +322,8 @@ void uwsgi_imperial_monitor_socket_init(struct uwsgi_emperor_scanner *ues)
 	if (socket_name == NULL) {
 		socket_name = uwsgi_str("@emperor");
 	}
+	uwsgi_log_verbose("[emperor_socket]: listen_queue %d",
+			  uwsgi.listen_queue);
 	char *addr = socket_name;
 	if (strncmp("unix:", addr, 5) == 0) {
 		uwsgi_log("unix socket\n");
@@ -369,10 +368,13 @@ void uwsgi_imperial_monitor_socket(
 	uwsgi_foreach(sp, spawn_list)
 	{
 		ui_current = emperor_get(sp->vassal_name);
-		if (ui_current && ui_current->accepting && sp->fd != 0) {
-			// int vfd = uwsgi_connect(sp->vassal_socket, 1, 0);
-			// if (vfd > -1) {
-			// close(vfd);
+		/* ui_current->status <= 0: Checks that the vassal is not
+		 *   currently begin destroyed.
+		 * ui_current->accepting: Check that the vassal is done
+		 *   spawning.
+		 */
+		if (ui_current && ui_current->accepting && sp->fd != 0 &&
+		    ui_current->status <= 0) {
 			uwsgi_foreach(fp, sp->fd)
 			{
 				queue = queue - 1;
@@ -387,7 +389,6 @@ void uwsgi_imperial_monitor_socket(
 			free_fd_list(sp->fd);
 			sp->fd = 0;
 			sp->last_spawn = 0;
-			//}
 		}
 		else if (uwsgi_now() - sp->last_spawn > timeout &&
 			 sp->last_spawn != 0) {
