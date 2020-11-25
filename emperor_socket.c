@@ -174,95 +174,49 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 			ui_current = emperor_get(vassal_name);
 
 			if (ui_current) {
-				int fd = ui_current->on_demand_fd;
-				ui_current->on_demand_fd = -1;
-				emperor_stop(ui_current);
-
 				struct uwsgi_instance *n_ui = NULL;
+				n_ui = uwsgi_calloc(sizeof(struct uwsgi_instance));
 
-				while (ui_current->ui_next) {
-					ui_current = ui_current->ui_next;
-				}
+				// Clone old
+				memcpy(n_ui, ui_current, sizeof(struct uwsgi_instance));
 
-				n_ui = uwsgi_calloc(
-					sizeof(struct uwsgi_instance));
-
-				if (config) {
-					n_ui->use_config = 1;
-					n_ui->config = config;
-					n_ui->config_len = smc.config_len;
-				}
-
-				ui_current->ui_next = n_ui;
-				n_ui->ui_prev = ui_current;
-
-				n_ui->scanner = ues;
-				memcpy(n_ui->name, vassal_name, strlen(vassal_name));
-				n_ui->born = uwsgi_now();
-				n_ui->uid = 0;
-				n_ui->gid = 0;
-				n_ui->last_mod = n_ui->born;
-				// start non-ready
-				n_ui->last_ready = 0;
-				n_ui->ready = 0;
-				// start without loyalty
-				n_ui->last_loyal = 0;
-				n_ui->loyal = 0;
-				n_ui->suspended = 0;
-
+				n_ui->use_config = 1;
+				n_ui->config = config;
+				n_ui->config_len = smc.config_len;
 				n_ui->attrs = attrs;
 
-				n_ui->first_run = uwsgi_now();
-				n_ui->last_run = n_ui->first_run;
-				n_ui->on_demand_fd = -1;
-				if (socket_name) {
-					n_ui->socket_name =
-						uwsgi_str(socket_name);
-				}
+				n_ui->ui_next = ui_current;
+				n_ui->ui_prev = ui_current->ui_prev;
 
-				n_ui->pid = -1;
-				n_ui->pipe[0] = -1;
-				n_ui->pipe[1] = -1;
+				n_ui->ui_prev->ui_next = n_ui;
 
-				n_ui->pipe_config[0] = -1;
-				n_ui->pipe_config[1] = -1;
+				ui_current->ui_prev = n_ui;
 
-				// Check if the Emperor has to wait for a
-				// command before spawning a vassal
-				if (uwsgi.emperor_command_socket) {
-					if (uwsgi.emperor_wait_for_command &&
-					    !uwsgi_string_list_has_item(
-						    uwsgi.emperor_wait_for_command_ignore,
-						    vassal_name, strlen(vassal_name))) {
-						n_ui->suspended = 1;
-						uwsgi_log(
-							"[uwsgi-emperor] %s -> "
-							"\"wait-for-command\" "
-							"instance detected, "
-							"waiting for the spawn "
-							"command ...\n",
-							vassal_name);
-						return;
+				// Give on demand socket to clone
+				n_ui->on_demand_fd = ui_current->on_demand_fd;
+				n_ui->socket_name = ui_current->socket_name;
+
+				// Remove on demand socket from parent
+				ui_current->socket_name = NULL;
+				ui_current->on_demand_fd = -1;
+				ui_current->status = 1;
+				ui_current->cursed_at = uwsgi_now();
+				if(ui_current->pid != -1) {
+					if (write(ui_current->pipe[0], "\1", 1) != 1) {
+						uwsgi_error("emperor_respawn/write()");
 					}
 				}
+				//emperor_stop(ui_current);
+				event_queue_add_fd_read(uwsgi.emperor_queue, n_ui->on_demand_fd);
+				n_ui->pipe[0] = -1;
+				n_ui->pipe_config[0] = -1;
+				n_ui->pid = -1;
+				n_ui->status = 0;
+				n_ui->cursed_at = 0;
+				n_ui->ready = 0;
+				n_ui->accepting = 0;
 
-				// ok here we check if we need to bind to the
-				// specified socket or continue with the
-				// activation
-				n_ui->on_demand_fd = fd;
-
-				event_queue_add_fd_read(uwsgi.emperor_queue,
-							n_ui->on_demand_fd);
-				uwsgi_log(
-					"[uwsgi-emperor] %s -> \"on demand\" "
-					"instance detected, waiting for "
-					"connections on socket \"%s\" ...\n",
-					vassal_name, socket_name);
-				if (uwsgi_hooks_run_and_return(
-					    uwsgi.hook_as_on_demand_vassal,
-					    "as-on-demand-vassal", vassal_name, 0)) {
-					emperor_del(n_ui);
-				}
+				uwsgi_log("[uwsgi-emperor] %s -> back to \"on demand\" mode, waiting for connections on socket \"%s\" ...\n", n_ui->name, n_ui->socket_name);
 			}
 			else {
 				emperor_add_with_attrs(
