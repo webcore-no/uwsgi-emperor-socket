@@ -18,6 +18,8 @@ struct uwsgi_option uwsgi_emperor_socket_options[] = {
 	UWSGI_END_OF_OPTIONS
 };
 
+void emperor_del(struct uwsgi_instance *c_ui);
+
 char *socket_addr;
 
 extern struct uwsgi_server uwsgi;
@@ -162,6 +164,7 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 				socket = uwsgi_strncopy(smc.socket,
 							smc.socket_len);
 			}
+
 			char *vassal_name =
 				uwsgi_strncopy(smc.vassal, smc.vassal_len);
 			uwsgi_log_verbose(
@@ -171,16 +174,95 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 			ui_current = emperor_get(vassal_name);
 
 			if (ui_current) {
-				if (smc.config_len !=
-					    ui_current->config_len ||
-				    memcmp(ui_current->config, config,
-					   smc.config_len)) {
-					free(ui_current->config);
-					ui_current->config = config;
-					ui_current->config_len =
-						smc.config_len;
+				int fd = ui_current->on_demand_fd;
+				ui_current->on_demand_fd = -1;
+				emperor_stop(ui_current);
+
+				struct uwsgi_instance *n_ui = NULL;
+
+				while (ui_current->ui_next) {
+					ui_current = ui_current->ui_next;
 				}
-				emperor_back_to_ondemand(ui_current);
+
+				n_ui = uwsgi_calloc(
+					sizeof(struct uwsgi_instance));
+
+				if (config) {
+					n_ui->use_config = 1;
+					n_ui->config = config;
+					n_ui->config_len = smc.config_len;
+				}
+
+				ui_current->ui_next = n_ui;
+				n_ui->ui_prev = ui_current;
+
+				n_ui->scanner = ues;
+				memcpy(n_ui->name, vassal_name, strlen(vassal_name));
+				n_ui->born = uwsgi_now();
+				n_ui->uid = 0;
+				n_ui->gid = 0;
+				n_ui->last_mod = n_ui->born;
+				// start non-ready
+				n_ui->last_ready = 0;
+				n_ui->ready = 0;
+				// start without loyalty
+				n_ui->last_loyal = 0;
+				n_ui->loyal = 0;
+				n_ui->suspended = 0;
+
+				n_ui->attrs = attrs;
+
+				n_ui->first_run = uwsgi_now();
+				n_ui->last_run = n_ui->first_run;
+				n_ui->on_demand_fd = -1;
+				if (socket_name) {
+					n_ui->socket_name =
+						uwsgi_str(socket_name);
+				}
+
+				n_ui->pid = -1;
+				n_ui->pipe[0] = -1;
+				n_ui->pipe[1] = -1;
+
+				n_ui->pipe_config[0] = -1;
+				n_ui->pipe_config[1] = -1;
+
+				// Check if the Emperor has to wait for a
+				// command before spawning a vassal
+				if (uwsgi.emperor_command_socket) {
+					if (uwsgi.emperor_wait_for_command &&
+					    !uwsgi_string_list_has_item(
+						    uwsgi.emperor_wait_for_command_ignore,
+						    vassal_name, strlen(vassal_name))) {
+						n_ui->suspended = 1;
+						uwsgi_log(
+							"[uwsgi-emperor] %s -> "
+							"\"wait-for-command\" "
+							"instance detected, "
+							"waiting for the spawn "
+							"command ...\n",
+							vassal_name);
+						return;
+					}
+				}
+
+				// ok here we check if we need to bind to the
+				// specified socket or continue with the
+				// activation
+				n_ui->on_demand_fd = fd;
+
+				event_queue_add_fd_read(uwsgi.emperor_queue,
+							n_ui->on_demand_fd);
+				uwsgi_log(
+					"[uwsgi-emperor] %s -> \"on demand\" "
+					"instance detected, waiting for "
+					"connections on socket \"%s\" ...\n",
+					vassal_name, socket_name);
+				if (uwsgi_hooks_run_and_return(
+					    uwsgi.hook_as_on_demand_vassal,
+					    "as-on-demand-vassal", vassal_name, 0)) {
+					emperor_del(n_ui);
+				}
 			}
 			else {
 				emperor_add_with_attrs(
