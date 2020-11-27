@@ -6,8 +6,8 @@
 
 // configurable variables
 int queue_length = 100;
+int vassal_limit = 10;
 char *socket_name;
-
 struct uwsgi_option uwsgi_emperor_socket_options[] = {
 	{ "empsoc-socket", required_argument, 0,
 	  "set the socket name for emperor_socket", uwsgi_opt_set_str,
@@ -15,6 +15,9 @@ struct uwsgi_option uwsgi_emperor_socket_options[] = {
 	{ "empsoc-queue", required_argument, 0,
 	  "set the queue length for emperor_socket", uwsgi_opt_set_int,
 	  &queue_length, 0 },
+	{ "empsoc-vassal-limit", required_argument, 0,
+	  "The max ammount of vassals per socket", uwsgi_opt_set_int,
+	  &vassal_limit, 0 },
 	UWSGI_END_OF_OPTIONS
 };
 
@@ -197,6 +200,9 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 				n_ui->socket_name = ui_current->socket_name;
 
 				// Remove on demand socket from parent
+				int name_len = strlen(ui_current->name);
+				//global millie counter
+				snprintf(ui_current->name + name_len, 0xff - name_len, "_old_%ld", uwsgi_now());
 				ui_current->socket_name = NULL;
 				ui_current->on_demand_fd = -1;
 				ui_current->status = 1;
@@ -205,9 +211,12 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 					if (write(ui_current->pipe[0], "\1", 1) != 1) {
 						uwsgi_error("emperor_respawn/write()");
 					}
+					event_queue_add_fd_read(uwsgi.emperor_queue, n_ui->on_demand_fd);
+				} else {
+					// vassal never spawned, make it look loyal
+					ui_current->loyal = 1;
 				}
 				//emperor_stop(ui_current);
-				event_queue_add_fd_read(uwsgi.emperor_queue, n_ui->on_demand_fd);
 				n_ui->pipe[0] = -1;
 				n_ui->pipe_config[0] = -1;
 				n_ui->pid = -1;
@@ -217,6 +226,28 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 				n_ui->accepting = 0;
 
 				uwsgi_log("[uwsgi-emperor] %s -> back to \"on demand\" mode, waiting for connections on socket \"%s\" ...\n", n_ui->name, n_ui->socket_name);
+
+
+				//If vassals limit is 0, ignore limit
+				if(vassal_limit) {
+					int vassal_count = 0;
+					//Kill surpluss vassals
+					while(ui_current && !strncmp(ui_current->name, vassal_name, strlen(vassal_name))) {
+						vassal_count++;
+						if(vassal_count > vassal_limit) {
+							if(ui_current->pid > 0) {
+								uwsgi_log_verbose("[emperor_socket]: Surpluss vassal \"%s\"[%d] detected for \"%s\", initiating ungracefull shutdown.", ui_current->name, ui_current->pid, vassal_name);
+								//Ungracefull shutdown
+								if (kill(ui_current->pid, SIGTERM) < 0) {
+									uwsgi_error("[emperor] kill()");
+									// delete the vassal, something is seriously wrong better to not leak memory...
+									emperor_del(ui_current);
+								}
+							}
+						}
+						ui_current = ui_current->ui_next;
+					}
+				}
 			}
 			else {
 				emperor_add_with_attrs(
