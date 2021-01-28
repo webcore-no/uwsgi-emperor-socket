@@ -1,0 +1,73 @@
+diff --git a/core/socket.c b/core/socket.c
+index 93229229..ac25c991 100644
+--- a/core/socket.c
++++ b/core/socket.c
+@@ -208,13 +208,13 @@ int bind_to_unix(char *socket_name, int listen_queue, int chmod_socket, int abst
+ 	}
+ 
+ 	if (abstract_socket == 1) {
+-		uwsgi_log("setting abstract socket mode (warning: only Linux supports this)\n");
++		uwsgi_log("setting abstract socket mode for %s (warning: only Linux supports this)\n",socket_name);
+ 	}
+ 
+ 	uws_addr->sun_family = AF_UNIX;
+ 	if (socket_name[0] == '@') {
+ 		memcpy(uws_addr->sun_path + abstract_socket, socket_name + 1, UMIN(strlen(socket_name + 1), 101));
+-		len = strlen(socket_name) + 1;
++		len = strlen(socket_name + 1) + 1;
+ 	}
+ 	else if (strlen(socket_name) > 1 && socket_name[0] == '\\' && socket_name[1] == '0') {
+ 		memcpy(uws_addr->sun_path + abstract_socket, socket_name + 2, UMIN(strlen(socket_name + 2), 101));
+@@ -410,7 +410,7 @@ static int connect_to_unix(char *socket_name, int timeout, int async) {
+ 	uws_addr.sun_family = AF_UNIX;
+ 
+ 	if (socket_name[0] == '@') {
+-		un_size = sizeof(uws_addr.sun_family) + strlen(socket_name) + 1;
++		un_size = sizeof(uws_addr.sun_family) + strlen(socket_name + 1) + 1;
+ 		memcpy(uws_addr.sun_path + 1, socket_name + 1, UMIN(strlen(socket_name + 1), 101));
+ 	}
+ 	else if (strlen(socket_name) > 1 && socket_name[0] == '\\' && socket_name[1] == '0') {
+@@ -616,7 +616,7 @@ socklen_t socket_to_un_addr(char *socket_name, struct sockaddr_un * sun_addr) {
+ 	// abstract socket
+ 	if (socket_name[0] == '@') {
+ 		memcpy(sun_addr->sun_path + 1, socket_name + 1, UMIN(len - 1, 101));
+-		len = strlen(socket_name) + 1;
++		len = strlen(socket_name + 1) + 1;
+ 	}
+ 	else if (len > 1 && socket_name[0] == '\\' && socket_name[1] == '0') {
+ 		memcpy(sun_addr->sun_path + 1, socket_name + 2, UMIN(len - 2, 101));
+@@ -664,7 +664,6 @@ socklen_t socket_to_in_addr(char *socket_name, char *port, int portn, struct soc
+ }
+ 
+ int bind_to_tcp(char *socket_name, int listen_queue, char *tcp_port) {
+-
+ 	int serverfd;
+ #ifdef AF_INET6
+ 	struct sockaddr_in6 uws_addr;
+@@ -680,7 +679,7 @@ int bind_to_tcp(char *socket_name, int listen_queue, char *tcp_port) {
+ 		socket_to_in_addr6(socket_name, tcp_port, 0, &uws_addr);
+ 		addr_len = sizeof(struct sockaddr_in6);
+ 	}
+-	else {	
++	else {
+ #endif
+ 		socket_to_in_addr(socket_name, tcp_port, 0, (struct sockaddr_in *) &uws_addr);
+ #ifdef AF_INET6
+@@ -690,7 +689,7 @@ int bind_to_tcp(char *socket_name, int listen_queue, char *tcp_port) {
+ 
+ 	serverfd = create_server_socket(family, SOCK_STREAM);
+ 	if (serverfd < 0) return -1;
+-	
++
+ #ifdef __linux__
+ #ifndef IP_FREEBIND
+ #define IP_FREEBIND 15
+@@ -1618,7 +1617,7 @@ void uwsgi_setup_shared_sockets() {
+ 				uwsgi_log("unable to create shared socket on: %s\n", shared_sock->name);
+ 				exit(1);
+ 			}
+- 
++
+ 			if (shared_sock->no_defer) {
+                                 uwsgi.no_defer_accept = current_defer_accept;
+                         }
