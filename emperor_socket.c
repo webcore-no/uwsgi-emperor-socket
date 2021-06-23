@@ -254,10 +254,21 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 					ues, vassal_name, uwsgi_now(),
 					config, smc.config_len, 0, 0,
 					socket, attrs);
+				ui_current = emperor_get(vassal_name);
+				if(uwsgi_emperor_vassal_start(ui_current)) {
+					emperor_del(ui_current);
+				}
 			}
 
-			if (write(client_fd, "+OK\n", 4) < 0) {
-				uwsgi_error("uwsgi_imperial_monitor_socket_event()/write()");
+			ui_current = emperor_get(vassal_name);
+			if(ui_current) {
+				if (write(client_fd, "+OK\n", 4) < 0) {
+					uwsgi_error("uwsgi_imperial_monitor_socket_event()/write()");
+				}
+			} else {
+				if (write(client_fd, "+ER\n", 4) < 0) {
+					uwsgi_error("uwsgi_imperial_monitor_socket_event()/write()");
+				}
 			}
 			close(client_fd);
 			free(vassal_name);
