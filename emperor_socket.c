@@ -3,6 +3,7 @@
 #include "uwsgi.h"
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 // configurable variables
 int queue_length = 100;
@@ -254,7 +255,10 @@ void uwsgi_imperial_monitor_socket_event(struct uwsgi_emperor_scanner *ues)
 					ues, vassal_name, uwsgi_now(),
 					config, smc.config_len, 0, 0,
 					socket, attrs);
+
 				ui_current = emperor_get(vassal_name);
+
+				event_queue_del_fd(uwsgi.emperor_queue, ui_current->on_demand_fd, event_queue_read());
 				if(uwsgi_emperor_vassal_start(ui_current)) {
 					emperor_del(ui_current);
 				}
